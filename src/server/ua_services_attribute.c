@@ -201,49 +201,29 @@ typeCheckValue(UA_Server *server, const UA_NodeId *targetDataTypeId,
                UA_Int32 targetValueRank, size_t targetArrayDimensionsSize,
                const UA_UInt32 *targetArrayDimensions, const UA_Variant *value,
                const UA_NumericRange *range, UA_Variant *editableValue) {
-    /* Empty variant is only allowed for BaseDataType */
-    UA_NodeId basedatatype = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATATYPE);
-    if(!value->type) {
-        if(UA_NodeId_equal(targetDataTypeId, &basedatatype))
-            goto check_array;
-        else
-            return UA_STATUSCODE_BADTYPEMISMATCH;
-    }
-
-    /* See if the types match. The nodeid on the wire may be != the nodeid in
-     * the node for opaque types, enums and bytestrings. value contains the
-     * correct type definition after the following paragraph */
-    if(UA_NodeId_equal(&value->type->typeId, targetDataTypeId))
-        goto check_array;
-
-    /* Some structured type may be omitted from the type hierarchy. Ensure that
-     * every type is valid for BaseDataType */
-    if(UA_NodeId_equal(targetDataTypeId, &basedatatype))
-        goto check_array;
+    /* Empty variant always matches */
+    if(!value->type)
+        return UA_STATUSCODE_GOOD;
 
     /* Has the value a subtype of the required type? */
     const UA_NodeId subtypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE);
-    if(isNodeInTree(server->nodestore, &value->type->typeId, targetDataTypeId, &subtypeId, 1))
-        goto check_array;
+    if(!isNodeInTree(server->nodestore, &value->type->typeId, targetDataTypeId, &subtypeId, 1)) {
+        /* Convert to a matching value if possible */
+        if(!editableValue)
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        value = convertToMatchingValue(server, value, targetDataTypeId, editableValue);
+        if(!value)
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+    }
 
-    /* Try to convert to a matching value if this is wanted */
-    if(!editableValue)
-        return UA_STATUSCODE_BADTYPEMISMATCH;
-    value = convertToMatchingValue(server, value, targetDataTypeId, editableValue);
-    if(!value)
-        return UA_STATUSCODE_BADTYPEMISMATCH;
-
- check_array:
-    if(range) /* array dimensions are checked later when writing the range */
+    if(range) /* Array dimensions are checked later when writing the range */
         return UA_STATUSCODE_GOOD;
 
     /* See if the array dimensions match. When arrayDimensions are defined, they
-     * already hold the valuerank. */
+     * already match the valuerank. */
     if(targetArrayDimensionsSize > 0)
-        return compatibleArrayDimensions(targetArrayDimensionsSize,
-                                         targetArrayDimensions,
-                                         value->arrayDimensionsSize,
-                                         value->arrayDimensions);
+        return compatibleArrayDimensions(targetArrayDimensionsSize, targetArrayDimensions,
+                                         value->arrayDimensionsSize, value->arrayDimensions);
 
     /* Check if the valuerank allows for the value dimension */
     return compatibleValueRankValue(targetValueRank, value);
